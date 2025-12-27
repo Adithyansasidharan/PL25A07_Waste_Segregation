@@ -1,41 +1,65 @@
 /*
  * Project ID: PL25A07
- * Project Name: Waste Segregation
- * Description: Automated system for segregating Plastic, Glass, Paper, and Metal.
- * Hardware: Arduino Uno, 2x SG90 Servos.
+ * Project Title: Waste Segregation System
+ * Hardware: Arduino Uno, NEMA 17 Stepper (A4988), SG90 Servo, Limit Switch
+ *
+ * --- WIRING MAP ---
+ * NEMA 17 STEP Pin  -> Arduino Pin 3
+ * NEMA 17 DIR Pin   -> Arduino Pin 2
+ * Limit Switch (NO) -> Arduino Pin 7  (Common goes to GND)
+ * Lid Servo Signal  -> Arduino Pin 9
  */
 
 #include <Servo.h>
 
-Servo diskServo; 
+// --- PIN DEFINITIONS ---
+const int stepPin = 3;        
+const int dirPin = 2;         
+const int limitSwitchPin = 7; 
+const int servoPin = 9;       
+
 Servo lidServo;
 
-// --- CONFIGURATION ---
-const int diskPin = 9;   // Selector Disk
-const int lidPin = 10;   // Dustbin Lid
+// --- CALIBRATED STEP COUNTS ---
+// Updated based on user calibration
+const int stepsPlastic = 0;   // Home
+const int stepsGlass = 100;   
+const int stepsPaper = 200;   
+const int stepsMetal = 300;   
 
-// --- ANGLES (Calibrated for SG90) ---
-// Sequence: Plastic -> Glass -> Paper -> Metal
-const int posPlastic = 0;
-const int posGlass = 60;
-const int posPaper = 120;
-const int posMetal = 175; 
-
-const int lidClosed = 0; 
-const int lidOpen = 90; 
+// Variable to track current position
+int currentStepPosition = 0;
 
 void setup() {
   Serial.begin(9600);
-  
-  diskServo.attach(diskPin);
-  lidServo.attach(lidPin);
+  Serial.println("--- PL25A07 SYSTEM BOOT ---");
 
-  // Initialize System
-  diskServo.write(posPlastic);
-  lidServo.write(lidClosed);
-  
-  Serial.println("PL25A07 Waste Segregation System Initialized.");
-  Serial.println("Ready for input: plastic, glass, paper, metal");
+  pinMode(stepPin, OUTPUT);
+  pinMode(dirPin, OUTPUT);
+  pinMode(limitSwitchPin, INPUT_PULLUP); 
+
+  lidServo.attach(servoPin);
+  lidServo.write(0); // Close lid
+  delay(500);
+
+  // --- HOMING SEQUENCE ---
+  Serial.println("Status: Homing...");
+  digitalWrite(dirPin, HIGH); // Rotate Backward
+
+  long startTime = millis();
+  while (digitalRead(limitSwitchPin) == HIGH) {
+    stepMotor(1); 
+    delay(5);     
+    
+    if (millis() - startTime > 5000) { 
+      Serial.println("ERROR: Homing Timeout!");
+      break; 
+    }
+  }
+
+  currentStepPosition = 0;
+  Serial.println("Status: Homing Complete (Position 0).");
+  Serial.println("READY. Type: plastic, glass, paper, metal");
 }
 
 void loop() {
@@ -44,24 +68,61 @@ void loop() {
     command.trim();        
     command.toLowerCase(); 
 
-    int targetAngle = -1;
+    int targetSteps = -1;
 
-    if (command == "plastic") targetAngle = posPlastic;
-    else if (command == "glass") targetAngle = posGlass;
-    else if (command == "paper") targetAngle = posPaper;
-    else if (command == "metal") targetAngle = posMetal;
+    // Match command to your calibrated steps
+    if (command == "plastic") targetSteps = stepsPlastic;
+    else if (command == "glass") targetSteps = stepsGlass;
+    else if (command == "paper") targetSteps = stepsPaper;
+    else if (command == "metal") targetSteps = stepsMetal;
 
-    if (targetAngle != -1) {
-      // 1. Align Selector Disk
-      diskServo.write(targetAngle);
-      delay(800); 
+    if (targetSteps != -1) {
+      Serial.print("Processing: ");
+      Serial.println(command);
+
+      // 1. Move Stepper
+      moveToPosition(targetSteps);
+      delay(500); 
 
       // 2. Open Lid
-      lidServo.write(lidOpen);
-      delay(3000); 
+      Serial.println("Opening Lid...");
+      lidServo.write(90); 
+      delay(3000);        
 
       // 3. Close Lid
-      lidServo.write(lidClosed);
-    }
+      Serial.println("Closing Lid...");
+      lidServo.write(10);  
+      
+      Serial.println("--- Ready ---");
+    } 
+  }
+}
+
+// Moves motor to specific target step
+void moveToPosition(int target) {
+  int stepsToMove = target - currentStepPosition;
+
+  if (stepsToMove > 0) {
+    digitalWrite(dirPin, LOW); // Forward
+  } else {
+    digitalWrite(dirPin, HIGH); // Backward
+    stepsToMove = -stepsToMove;
+  }
+
+  for (int i = 0; i < stepsToMove; i++) {
+    stepMotor(1);
+    delay(5); // Speed Control (Lower is faster)
+  }
+
+  currentStepPosition = target;
+}
+
+// Single step pulse
+void stepMotor(int steps) {
+  for (int i = 0; i < steps; i++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(1000); 
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(1000); 
   }
 }
